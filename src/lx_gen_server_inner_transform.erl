@@ -17,11 +17,11 @@
 
 -ifndef(LX_TEST).
 -define(LX_TEST, false).
-parse_transform(Forms0, _Options) ->
-    transform(Forms0).
+parse_transform([{attribute, 1, file, _FilePath}, {attribute, _L, module, ModuleName} | _Tail] = Forms0, _Options) ->
+    transform(ModuleName, Forms0).
 -else.
 parse_transform([{attribute, 1, file, _FilePath}, {attribute, _L, module, ModuleName} | _Tail] = Forms0, _Options) ->
-    Forms2 = transform(Forms0),
+    Forms2 = transform(ModuleName, Forms0),
     case ?LX_TEST of
         false ->
             Forms2;
@@ -38,15 +38,16 @@ outdir(Module) ->
     Options = proplists:get_value(options, CompileInfos, []),
     proplists:get_value(outdir, Options, "").
 
-transform(Forms) ->
+transform(ModuleName, Forms) ->
     case get_inherit_funs(Forms) of
         no_need ->
             Forms;
         {BaseModule, InheritFuns} ->
             FunExprs = collect_abstract_code(outdir(BaseModule), BaseModule, InheritFuns),
+            FunExprs2 = [{function, 0, '$module', 0, [{clause, 0, [], [], [{atom, 0, ModuleName}]}]} | FunExprs],
             ExportAttrExpr = get_export_attrs(InheritFuns),
-            Forms1 = add_attributes(Forms, [{attribute, 0, behaviour, gen_server}, ExportAttrExpr]),
-            add_new_funcs(Forms1, FunExprs)
+            Forms1 = add_attributes(Forms, [{attribute, 0, behaviour, gen_server}, {attribute, 0, export, [{'$module', 0}]}, ExportAttrExpr]),
+            add_new_funcs(Forms1, FunExprs2)
     end.
 
 %% 获取 -export 表达式
@@ -164,6 +165,8 @@ replace_arg_line_num({'block', _L, Body}) ->
     {'block', 0, replace_body_line_num(Body)};
 replace_arg_line_num({match, _L, LeftValue, RightValue}) ->
     {match, 0, replace_arg_line_num(LeftValue), replace_arg_line_num(RightValue)};
+replace_arg_line_num({remote, _L, {atom, _L1, Module}, {atom, _L2, Fun}}) ->
+    {remote, 0, {atom, 58, Module}, {atom, 0, Fun}};
 replace_arg_line_num({Type, _L, Value}) ->
     {Type, 0, Value}.
 
@@ -182,9 +185,9 @@ replace_guard_line_num(Guard) ->
 replace_guard_line_num([], Result) ->
     lists:reverse(Result);
 replace_guard_line_num([{call, _L, FunName, Values} | Tail], Result) ->
-    replace_guard_line_num(Tail, [{call, 0, replace_fun_name_line_num(FunName), replace_args_line_num(Values)} |Result]);
+    replace_guard_line_num(Tail, [{call, 0, replace_fun_name_line_num(FunName), replace_args_line_num(Values)} | Result]);
 replace_guard_line_num([{op, _L, Type, LeftValue, RightValue} | Tail], Result) ->
-    replace_guard_line_num(Tail, [{op, 0, Type, replace_arg_line_num(LeftValue), replace_arg_line_num(RightValue)} |Result]).
+    replace_guard_line_num(Tail, [{op, 0, Type, replace_arg_line_num(LeftValue), replace_arg_line_num(RightValue)} | Result]).
 
 replace_fun_name_line_num(Forms) ->
     replace_arg_line_num(Forms).
@@ -195,19 +198,19 @@ replace_body_line_num(Forms) ->
 
 replace_body_line_num([], Result) ->
     lists:reverse(Result);
-replace_body_line_num([{'try', _L, Exprs, Guards, Catchs, Afters}|Tail], Result) ->
+replace_body_line_num([{'try', _L, Exprs, Guards, Catchs, Afters} | Tail], Result) ->
     replace_body_line_num(Tail, [{'try', 0, replace_body_line_num(Exprs), replace_clause_line_num(Guards), replace_clause_line_num(Catchs), replace_body_line_num(Afters)} | Result]);
-replace_body_line_num([{'case', _L, Value, Clause}|Tail], Result) ->
+replace_body_line_num([{'case', _L, Value, Clause} | Tail], Result) ->
     replace_body_line_num(Tail, [{'case', 0, replace_arg_line_num(Value), replace_clause_line_num(Clause)} | Result]);
-replace_body_line_num([{'if', _L, Clause}|Tail], Result) ->
+replace_body_line_num([{'if', _L, Clause} | Tail], Result) ->
     replace_body_line_num(Tail, [{'case', 0, replace_clause_line_num(Clause)} | Result]);
-replace_body_line_num([{'block', _L, Body}|Tail], Result) ->
+replace_body_line_num([{'block', _L, Body} | Tail], Result) ->
     replace_body_line_num(Tail, [{'case', 0, replace_body_line_num(Body)} | Result]);
-replace_body_line_num([{'receive', _L, Clause, AfterGuard, AfterExpr}|Tail], Result) ->
+replace_body_line_num([{'receive', _L, Clause, AfterGuard, AfterExpr} | Tail], Result) ->
     replace_body_line_num(Tail, [{'receive', 0, replace_clause_line_num(Clause), replace_arg_line_num(AfterGuard), replace_body_line_num(AfterExpr)} | Result]);
-replace_body_line_num([{call, _L, FunName, Value}|Tail], Result) ->
+replace_body_line_num([{call, _L, FunName, Value} | Tail], Result) ->
     replace_body_line_num(Tail, [{call, 0, replace_fun_name_line_num(FunName), replace_args_line_num(Value)} | Result]);
-replace_body_line_num([{Type, _L, Value}|Tail], Result) ->
+replace_body_line_num([{Type, _L, Value} | Tail], Result) ->
     replace_body_line_num(Tail, [{Type, 0, Value} | Result]).
 
 add_attributes([{attribute, _, module, _} = F | Fs], Attrs) ->

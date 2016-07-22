@@ -92,4 +92,7 @@ do_init_test_() ->
 do_call_test_() ->
     ?_assertEqual(do_call(1,2,3), ?MODULE:handle_call(1,2,3)).
 
+do_module_name_test_() ->
+    ?_assertEqual(?MODULE, '$module'()).
+
 -endif.
